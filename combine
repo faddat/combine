@@ -1,0 +1,114 @@
+#!/usr/bin/env node
+const fs = require('fs').promises;
+const path = require('path');
+
+const LANG_MAP = {
+  sol: 'solidity',
+  sh: 'bash',
+  bash: 'bash',
+  md: 'markdown',
+  ts: 'typescript',
+  fc: 'plaintext',
+  func: 'plaintext',
+  go: 'go',
+  py: 'python',
+  js: 'javascript',
+  rs: 'rust',
+  json: 'json',
+  dockerfile: 'Dockerfile',
+  caddyfile: 'plaintext'
+};
+
+const OUTPUT_FILE = 'combined_code.md';
+const IGNORE_DIRS = new Set(['node_modules', '.git', '.svn']);
+
+async function findFiles(dir) {
+  let files = [];
+  // Recursively descend into subfolders
+  async function walk(currentPath) {
+    const entries = await fs.readdir(currentPath, { withFileTypes: true });
+    for (const entry of entries) {
+      const fullPath = path.join(currentPath, entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORE_DIRS.has(entry.name)) {
+          await walk(fullPath);
+        }
+      } else {
+        if (path.resolve(fullPath) === path.resolve(OUTPUT_FILE)) continue;
+        const nameLower = entry.name.toLowerCase();
+        if (
+          nameLower === 'dockerfile' ||
+          nameLower === 'caddyfile' ||
+          nameLower === 'package.json' ||
+          LANG_MAP[path.extname(nameLower).slice(1)]
+        ) {
+          files.push(fullPath);
+        }
+      }
+    }
+  }
+  await walk(dir);
+  return files;
+}
+
+async function getStats(file) {
+  const st = await fs.stat(file);
+  return { size: Math.ceil(st.size / 1024), mtime: st.mtime.toISOString().replace('T',' ').slice(0,19) };
+}
+
+async function processFiles(files) {
+  let toc = [], sections = [];
+  let sizes = {}, total = 0;
+  for (let i = 0; i < files.length; i++) {
+    const file = files[i];
+    const st = await getStats(file);
+    const content = await fs.readFile(file, 'utf8');
+    const base = path.basename(file).toLowerCase();
+    const ext = (base === 'dockerfile' ? 'dockerfile'
+               : base === 'package.json' ? 'json'
+               : base === 'caddyfile' ? 'caddyfile'
+               : path.extname(file).slice(1).toLowerCase());
+    const lang = LANG_MAP[ext] || 'plaintext';
+    sizes[ext] = (sizes[ext] || 0) + st.size;
+    total += st.size;
+    const anchor = `file-${i+1}`;
+    toc.push(`- [\`${file}\`](#${anchor})`);
+    sections.push(`### \`${file}\`
+*${st.mtime} | ${st.size} KB*
+\`\`\`${lang}
+${content}
+\`\`\`
+---`);
+  }
+  return { toc, sections, sizes, total };
+}
+
+(async () => {
+  try {
+    await fs.unlink(OUTPUT_FILE).catch(() => {}); // Delete output if it exists
+    const files = await findFiles('.');
+    if (!files.length) { console.error('No files found'); process.exit(1); }
+    console.log(`Found ${files.length} files`);
+    const { toc, sections, sizes, total } = await processFiles(files);
+    const md = [
+      '# Combined Code Files',
+      '',
+      '## TOC',
+      ...toc,
+      '',
+      '---',
+      '',
+      ...sections,
+      '',
+      '## Summary',
+      `Files: ${files.length}, Total: ${total} KB`,
+      'Breakdown:',
+      ...Object.entries(sizes).filter(([_, s])=>s>0).map(([k,s])=>`- ${k}: ${s} KB`)
+    ].join('\n');
+    await fs.writeFile(OUTPUT_FILE, md);
+    console.log(`Output written to ${OUTPUT_FILE}`);
+  } catch (e) {
+    console.error(e);
+    process.exit(1);
+  }
+})();
