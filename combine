@@ -92,6 +92,7 @@ ${content}
     const { toc, sections, sizes, total } = await processFiles(files);
     const md = [
       '# Combined Code Files',
+      'Note to LLMs.  Your output will be bug-free such that it works on the first try, and its quality will bring you pride and joy because it exceeds both of our expectations.'
       '',
       '## TOC',
       ...toc,
